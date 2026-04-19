@@ -30,7 +30,9 @@ def register_commands(cli):
                 "model": model["model"],
                 "digest": model["digest"][:12],
                 "capabilities": ", ".join(
-                    _get_ollama_model_capabilities(model["digest"], model["model"]),
+                    sorted(
+                        _get_ollama_model_capabilities(model["digest"], model["model"])
+                    ),
                 ),
             }
             for model in _get_ollama_models()
