@@ -1,8 +1,8 @@
-import contextlib
 import os
 import warnings
 from collections import defaultdict
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 
 import llm
 import ollama
@@ -227,6 +227,55 @@ class _SharedOllama:
         output_tokens = usage.pop("completion_tokens")
         response.set_usage(input=input_tokens, output=output_tokens)
 
+    def _prepare_chat_kwargs(self, prompt) -> tuple[dict, dict]:
+        """Build the ``options`` and ``kwargs`` dicts for an Ollama chat call.
+
+        Splits prompt options into Ollama "options" (model parameters) and top-level
+        chat kwargs (``think``, ``format``, ``tools``), so both the sync and async
+        ``execute`` methods can prepare the request identically.
+        """
+        options = prompt.options.model_dump(exclude_none=True)
+        think = options.pop("think", None)
+        json_object = options.pop("json_object", None)
+        kwargs: dict = {}
+        if think is not None:
+            kwargs["think"] = think
+        if json_object:
+            kwargs["format"] = "json"
+        elif prompt.schema:
+            kwargs["format"] = prompt.schema
+        if prompt.tools:
+            kwargs["tools"] = [_llm_tool_to_ollama_tool(tool) for tool in prompt.tools]
+        return options, kwargs
+
+    @staticmethod
+    def _interpret_chunk(chunk: ollama.ChatResponse) -> "_ChunkResult":
+        """Translate one Ollama chat chunk (streaming or non-streaming) into the pieces
+        the pump needs to emit: text to yield, tool calls to record, and usage to
+        register on completion.
+        """
+        result = _ChunkResult(text=chunk.message.content or "")
+        for tool_call in chunk.message.tool_calls or ():
+            result.tool_calls.append(
+                llm.ToolCall(
+                    name=tool_call.function.name,
+                    arguments=tool_call.function.arguments,
+                ),
+            )
+        if chunk.done:
+            result.usage = {
+                "prompt_tokens": chunk.prompt_eval_count,
+                "completion_tokens": chunk.eval_count,
+            }
+        return result
+
+
+@dataclass
+class _ChunkResult:
+    text: str = ""
+    tool_calls: list[llm.ToolCall] = field(default_factory=list)
+    usage: dict | None = None
+
 
 class Ollama(_SharedOllama, llm.Model):
     def execute(
@@ -238,19 +287,8 @@ class Ollama(_SharedOllama, llm.Model):
     ):
         messages = self.build_messages(prompt, conversation)
         response._prompt_json = {"messages": messages}
-        options = prompt.options.model_dump(exclude_none=True)
-        think = options.pop("think", None)
-        json_object = options.pop("json_object", None)
-        kwargs = {}
+        options, kwargs = self._prepare_chat_kwargs(prompt)
         usage = None
-        if think is not None:
-            kwargs["think"] = think
-        if json_object:
-            kwargs["format"] = "json"
-        elif prompt.schema:
-            kwargs["format"] = prompt.schema
-        if prompt.tools:
-            kwargs["tools"] = [_llm_tool_to_ollama_tool(tool) for tool in prompt.tools]
         if stream:
             response_stream = get_client().chat(
                 model=self.model_id,
@@ -260,21 +298,12 @@ class Ollama(_SharedOllama, llm.Model):
                 **kwargs,
             )
             for chunk in response_stream:
-                if chunk.message.tool_calls:
-                    for tool_call in chunk.message.tool_calls:
-                        response.add_tool_call(
-                            llm.ToolCall(
-                                name=tool_call.function.name,
-                                arguments=tool_call.function.arguments,
-                            ),
-                        )
-                with contextlib.suppress(KeyError):
-                    if chunk["done"]:
-                        usage = {
-                            "prompt_tokens": chunk["prompt_eval_count"],
-                            "completion_tokens": chunk["eval_count"],
-                        }
-                    yield chunk["message"]["content"]
+                result = self._interpret_chunk(chunk)
+                for tool_call in result.tool_calls:
+                    response.add_tool_call(tool_call)
+                if result.usage is not None:
+                    usage = result.usage
+                yield result.text
         else:
             ollama_response = get_client().chat(
                 model=self.model_id,
@@ -283,19 +312,11 @@ class Ollama(_SharedOllama, llm.Model):
                 **kwargs,
             )
             response.response_json = ollama_response.model_dump()
-            usage = {
-                "prompt_tokens": response.response_json["prompt_eval_count"],
-                "completion_tokens": response.response_json["eval_count"],
-            }
-            yield response.response_json["message"]["content"]
-            if ollama_response.message.tool_calls:
-                for tool_call in ollama_response.message.tool_calls:
-                    response.add_tool_call(
-                        llm.ToolCall(
-                            name=tool_call.function.name,
-                            arguments=tool_call.function.arguments,
-                        ),
-                    )
+            result = self._interpret_chunk(ollama_response)
+            usage = result.usage
+            yield result.text
+            for tool_call in result.tool_calls:
+                response.add_tool_call(tool_call)
         self.set_usage(response, usage)
 
 
@@ -323,69 +344,37 @@ class AsyncOllama(_SharedOllama, llm.AsyncModel):
         """
         messages = self.build_messages(prompt, conversation)
         response._prompt_json = {"messages": messages}
-
-        options = prompt.options.model_dump(exclude_none=True)
-        think = options.pop("think", None)
-        json_object = options.pop("json_object", None)
-        kwargs = {}
+        options, kwargs = self._prepare_chat_kwargs(prompt)
         usage = None
-        if think is not None:
-            kwargs["think"] = think
-        if json_object:
-            kwargs["format"] = "json"
-        elif prompt.schema:
-            kwargs["format"] = prompt.schema
-        if prompt.tools:
-            kwargs["tools"] = [_llm_tool_to_ollama_tool(tool) for tool in prompt.tools]
-
-        try:
-            if stream:
-                response_stream = await get_async_client().chat(
-                    model=self.model_id,
-                    messages=messages,
-                    stream=True,
-                    options=options,
-                    **kwargs,
-                )
-                async for chunk in response_stream:
-                    for tool_call in chunk.get("message", {}).get("tool_calls") or []:
-                        response.add_tool_call(
-                            llm.ToolCall(
-                                name=tool_call["function"]["name"],
-                                arguments=tool_call["function"]["arguments"],
-                            ),
-                        )
-                    with contextlib.suppress(KeyError):
-                        yield chunk["message"]["content"]
-                        if chunk["done"]:
-                            usage = {
-                                "prompt_tokens": chunk["prompt_eval_count"],
-                                "completion_tokens": chunk["eval_count"],
-                            }
-            else:
-                ollama_response = await get_async_client().chat(
-                    model=self.model_id,
-                    messages=messages,
-                    options=options,
-                    **kwargs,
-                )
-                response.response_json = ollama_response.model_dump()
-                usage = {
-                    "prompt_tokens": response.response_json["prompt_eval_count"],
-                    "completion_tokens": response.response_json["eval_count"],
-                }
-                yield response.response_json["message"]["content"]
-                if ollama_response.message.tool_calls:
-                    for tool_call in ollama_response.message.tool_calls:
-                        response.add_tool_call(
-                            llm.ToolCall(
-                                name=tool_call.function.name,
-                                arguments=tool_call.function.arguments,
-                            ),
-                        )
-            self.set_usage(response, usage)
-        except Exception as e:
-            raise RuntimeError(f"Async execution failed: {e}") from e
+        if stream:
+            response_stream = await get_async_client().chat(
+                model=self.model_id,
+                messages=messages,
+                stream=True,
+                options=options,
+                **kwargs,
+            )
+            async for chunk in response_stream:
+                result = self._interpret_chunk(chunk)
+                for tool_call in result.tool_calls:
+                    response.add_tool_call(tool_call)
+                if result.usage is not None:
+                    usage = result.usage
+                yield result.text
+        else:
+            ollama_response = await get_async_client().chat(
+                model=self.model_id,
+                messages=messages,
+                options=options,
+                **kwargs,
+            )
+            response.response_json = ollama_response.model_dump()
+            result = self._interpret_chunk(ollama_response)
+            usage = result.usage
+            yield result.text
+            for tool_call in result.tool_calls:
+                response.add_tool_call(tool_call)
+        self.set_usage(response, usage)
 
 
 class OllamaEmbed(llm.EmbeddingModel):
