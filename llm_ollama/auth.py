@@ -53,6 +53,8 @@ def _parse_auth_from_url(url: str) -> tuple[str, httpx.BasicAuth | None]:
             username=unquote(parsed.username),
             password=unquote(parsed.password),
         )
+    if parsed.hostname is None:
+        return url, auth
     netloc = parsed.hostname
     if parsed.port:
         netloc = f"{netloc}:{parsed.port}"

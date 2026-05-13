@@ -2,7 +2,7 @@ from unittest.mock import ANY, Mock, patch
 
 import pytest
 
-from llm_ollama.auth import get_async_client, get_client
+from llm_ollama.auth import _parse_auth_from_url, get_async_client, get_client
 
 
 @pytest.fixture
@@ -216,6 +216,24 @@ def test_various_basic_auth_formats(
         headers={},
         timeout=ANY,
     )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "unix:///var/run/ollama.sock",
+        "/var/run/ollama.sock",
+        "localhost:11434",
+    ],
+)
+def test_parse_auth_from_url_passes_through_hostless_url(url):
+    """A URL with no hostname round-trips unchanged with no auth.
+
+    These shapes (unix socket, bare path, host:port without scheme) have no place to
+    carry credentials, so the parser must not rebuild the netloc — doing so would inject
+    the literal string "None" as the host.
+    """
+    assert _parse_auth_from_url(url) == (url, None)
 
 
 @pytest.mark.parametrize(
