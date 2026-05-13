@@ -282,7 +282,7 @@ class Ollama(_SharedOllama, llm.Model):
                 options=options,
                 **kwargs,
             )
-            response.response_json = ollama_response.dict()
+            response.response_json = ollama_response.model_dump()
             usage = {
                 "prompt_tokens": response.response_json["prompt_eval_count"],
                 "completion_tokens": response.response_json["eval_count"],
@@ -369,7 +369,7 @@ class AsyncOllama(_SharedOllama, llm.AsyncModel):
                     options=options,
                     **kwargs,
                 )
-                response.response_json = ollama_response.dict()
+                response.response_json = ollama_response.model_dump()
                 usage = {
                     "prompt_tokens": response.response_json["prompt_eval_count"],
                     "completion_tokens": response.response_json["eval_count"],
