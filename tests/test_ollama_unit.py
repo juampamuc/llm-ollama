@@ -256,3 +256,82 @@ async def test_async_streaming_yields_text(mocker, mock_ollama_client):
 
     assert await response.text() == "Test response 1Test response 2"
     client.chat.assert_called_once()
+
+
+def test_sync_streaming_captures_tool_calls(mocker, mock_ollama_client):
+    """Streamed chunks carrying tool_calls register on the sync response."""
+    _install_sync_chat(
+        mock_ollama_client,
+        chunks=[
+            _ollama_chunk(tool_calls=[("multiply", {"a": 6, "b": 7})]),
+            _ollama_chunk("ok", done=True, usage=True),
+        ],
+    )
+
+    response = get_model("llama2:7b").prompt("Dummy Prompt")
+    response.text()
+    tool_calls = response.tool_calls()
+
+    assert len(tool_calls) == 1
+    _assert_tool_call(tool_calls[0], "multiply", {"a": 6, "b": 7})
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_captures_tool_calls(mocker, mock_ollama_client):
+    """Streamed chunks carrying tool_calls register on the async response."""
+    _install_async_chat(
+        mocker,
+        chunks=[
+            _ollama_chunk(tool_calls=[("multiply", {"a": 6, "b": 7})]),
+            _ollama_chunk("ok", done=True, usage=True),
+        ],
+    )
+
+    response = get_async_model("llama2:7b").prompt("Dummy Prompt")
+    await response.text()
+    tool_calls = await response.tool_calls()
+
+    assert len(tool_calls) == 1
+    _assert_tool_call(tool_calls[0], "multiply", {"a": 6, "b": 7})
+
+
+def test_sync_non_streaming_captures_tool_calls(mocker, mock_ollama_client):
+    """A non-streamed sync response carrying tool_calls registers on the response."""
+    _install_sync_chat(
+        mock_ollama_client,
+        response=_ollama_chunk(
+            tool_calls=[("multiply", {"a": 6, "b": 7})],
+            done=True,
+            usage=True,
+        ),
+    )
+
+    response = get_model("llama2:7b").prompt("Dummy Prompt", stream=False)
+    response.text()
+    tool_calls = response.tool_calls()
+
+    assert len(tool_calls) == 1
+    _assert_tool_call(tool_calls[0], "multiply", {"a": 6, "b": 7})
+
+
+@pytest.mark.asyncio
+async def test_async_non_streaming_captures_tool_calls(
+    mocker,
+    mock_ollama_client,
+):
+    """A non-streamed async response carrying tool_calls registers on the response."""
+    _install_async_chat(
+        mocker,
+        response=_ollama_chunk(
+            tool_calls=[("multiply", {"a": 6, "b": 7})],
+            done=True,
+            usage=True,
+        ),
+    )
+
+    response = get_async_model("llama2:7b").prompt("Dummy Prompt", stream=False)
+    await response.text()
+    tool_calls = await response.tool_calls()
+
+    assert len(tool_calls) == 1
+    _assert_tool_call(tool_calls[0], "multiply", {"a": 6, "b": 7})
