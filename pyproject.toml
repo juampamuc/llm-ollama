@@ -19,7 +19,7 @@ CI = "https://github.com/taketwo/llm-ollama/actions"
 ollama = "llm_ollama"
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-asyncio", "pytest-mock"]
+test = ["pytest", "pytest-asyncio", "pytest-cov", "pytest-mock"]
 lint = ["ruff"]
 
 [tool.setuptools.packages.find]

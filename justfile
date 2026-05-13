@@ -14,6 +14,6 @@ check-format:
 fix-format:
     .venv/bin/ruff format .
 
-# Run tests; extra args are passed through, e.g. just test -k auth
+# Run tests with coverage; extra args are passed through, e.g. just test -k auth
 test *ARGS:
-    .venv/bin/pytest {{ARGS}}
+    .venv/bin/pytest --cov=llm_ollama --cov-report=term-missing {{ARGS}}
