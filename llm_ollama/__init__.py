@@ -489,8 +489,10 @@ def _llm_tool_to_ollama_tool(tool: llm.Tool) -> ollama.Tool:
         An ollama.Tool instance.
 
     """
+    assert tool.implementation is not None
     ollama_tool = convert_function_to_tool(tool.implementation)
-    if tool.name != tool.implementation.__name__:
+    assert ollama_tool.function is not None
+    if tool.name != getattr(tool.implementation, "__name__", None):
         ollama_tool.function.name = tool.name
     if tool.description:
         ollama_tool.function.description = tool.description
