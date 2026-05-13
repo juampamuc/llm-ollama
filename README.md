@@ -218,8 +218,7 @@ To set up this plugin locally, first checkout the code. Then create a new virtua
 
 ```bash
 cd llm-ollama
-uv venv
-uv pip install -e '.[test,lint]'
+uv sync --extra test --extra lint
 ```
 
 Otherwise, if you prefer using standard tools:
