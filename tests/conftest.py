@@ -19,7 +19,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--model",
         action="store",
-        default="llama3.2",
+        default="qwen3:8b",
         help="specify a model to use for integration tests (has to be capable of completion and tool usage)",
     )
     # Separate options for vision tests, since the models capable of tools and vision are large.

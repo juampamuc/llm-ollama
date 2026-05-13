@@ -42,6 +42,10 @@ def test_tools(integration_model):
         return int(a) * int(b)
 
     model = get_model(integration_model)
-    chain = model.chain("12345 * 4312", tools=[multiply])
+    chain = model.chain(
+        "What is 12345 * 4312? Use the available tools to compute the answer.",
+        tools=[multiply],
+        options={"temperature": 0, "think": False},
+    )
     result = chain.text()
     assert "53231640" in result or "53,231,640" in result
