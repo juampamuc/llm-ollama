@@ -6,6 +6,13 @@ default:
 setup:
     uv sync --extra test --extra lint
 
+# Run all checks
+check: check-format check-type
+
+# Run type checking
+check-type:
+    .venv/bin/ty check llm_ollama
+
 # Verify code formatting
 check-format:
     .venv/bin/ruff format --check .
