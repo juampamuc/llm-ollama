@@ -348,6 +348,13 @@ class AsyncOllama(_SharedOllama, llm.AsyncModel):
                     **kwargs,
                 )
                 async for chunk in response_stream:
+                    for tool_call in chunk.get("message", {}).get("tool_calls") or []:
+                        response.add_tool_call(
+                            llm.ToolCall(
+                                name=tool_call["function"]["name"],
+                                arguments=tool_call["function"]["arguments"],
+                            ),
+                        )
                     with contextlib.suppress(KeyError):
                         yield chunk["message"]["content"]
                         if chunk["done"]:
@@ -368,6 +375,14 @@ class AsyncOllama(_SharedOllama, llm.AsyncModel):
                     "completion_tokens": response.response_json["eval_count"],
                 }
                 yield response.response_json["message"]["content"]
+                if ollama_response.message.tool_calls:
+                    for tool_call in ollama_response.message.tool_calls:
+                        response.add_tool_call(
+                            llm.ToolCall(
+                                name=tool_call.function.name,
+                                arguments=tool_call.function.arguments,
+                            ),
+                        )
             self.set_usage(response, usage)
         except Exception as e:
             raise RuntimeError(f"Async execution failed: {e}") from e
