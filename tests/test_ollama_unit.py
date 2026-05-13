@@ -6,6 +6,7 @@ from httpx import ConnectError
 from llm import (
     get_async_model,
     get_embedding_models_with_aliases,
+    get_model,
     get_models_with_aliases,
     get_tools,
 )
@@ -74,6 +75,56 @@ def mock_ollama_client(mocker):
         ollama.ShowResponse(**m) for m in return_value["models"] if m["model"] == name
     )
     return client
+
+
+def _ollama_chunk(content="", *, tool_calls=None, done=False, usage=False):
+    """Build an ollama.ChatResponse chunk for the streaming code paths."""
+    typed_calls = [
+        ollama.Message.ToolCall(
+            function=ollama.Message.ToolCall.Function(name=tc[0], arguments=tc[1]),
+        )
+        for tc in (tool_calls or [])
+    ]
+    extras = {"prompt_eval_count": 1, "eval_count": 1} if usage else {}
+    return ollama.ChatResponse(
+        model="llama2:7b",
+        message=ollama.Message(
+            role="assistant",
+            content=content,
+            tool_calls=typed_calls or None,
+        ),
+        done=done,
+        **extras,
+    )
+
+
+def _install_async_chat(mocker, *, chunks=None, response=None):
+    """Mock ollama.AsyncClient.chat for streaming or non-streaming calls."""
+    client = AsyncMock()
+    if chunks is not None:
+
+        async def mock_chat(*_args, **_kwargs):
+            for chunk in chunks:
+                yield chunk
+
+        client.chat.return_value = mock_chat()
+    else:
+        client.chat.return_value = response
+    mocker.patch("ollama.AsyncClient", return_value=client)
+    return client
+
+
+def _install_sync_chat(mock_ollama_client, *, chunks=None, response=None):
+    """Mock ollama.Client.chat for streaming or non-streaming calls."""
+    mock_ollama_client.chat.return_value = (
+        iter(chunks) if chunks is not None else response
+    )
+    return mock_ollama_client
+
+
+def _assert_tool_call(tc, name, arguments):
+    assert tc.name == name
+    assert tc.arguments == arguments
 
 
 def test_plugin_is_installed():
@@ -174,26 +225,34 @@ def test_registered_models_when_ollama_is_down(mocker):
     assert not any(isinstance(m.model, Ollama) for m in get_models_with_aliases())
 
 
+def test_sync_streaming_yields_text(mocker, mock_ollama_client):
+    """A streamed sync response yields concatenated text content."""
+    _install_sync_chat(
+        mock_ollama_client,
+        chunks=[
+            _ollama_chunk("Test response 1"),
+            _ollama_chunk("Test response 2", done=True, usage=True),
+        ],
+    )
+
+    response = get_model("llama2:7b").prompt("Dummy Prompt")
+
+    assert response.text() == "Test response 1Test response 2"
+    mock_ollama_client.chat.assert_called_once()
+
+
 @pytest.mark.asyncio
-async def test_async_ollama_call(mocker, mock_ollama_client):
-    # Mock the asynchronous chat method to return an async iterable
-    async def mock_chat(*args, **kwargs):
-        messages = [
-            {"message": {"content": "Test response 1"}},
-            {"message": {"content": "Test response 2"}},
-        ]
-        for msg in messages:
-            yield msg
+async def test_async_streaming_yields_text(mocker, mock_ollama_client):
+    """A streamed async response yields concatenated text content."""
+    client = _install_async_chat(
+        mocker,
+        chunks=[
+            _ollama_chunk("Test response 1"),
+            _ollama_chunk("Test response 2", done=True, usage=True),
+        ],
+    )
 
-    client = AsyncMock()
-    client.chat.return_value = mock_chat()
+    response = get_async_model("llama2:7b").prompt("Dummy Prompt")
 
-    mocker.patch("ollama.AsyncClient", return_value=client)
-
-    # Instantiate the model and send a prompt
-    model = get_async_model("llama2:7b")
-    response = model.prompt("Dummy Prompt")
-    response_text = await response.text()
-
-    assert response_text == "Test response 1Test response 2"
+    assert await response.text() == "Test response 1Test response 2"
     client.chat.assert_called_once()
